@@ -429,6 +429,7 @@ function advanceDay(skipNarration=false){
     renderCL();
     log('DAY '+currentDay+' 시작.');
     if(typeof ANT!=='undefined'&&ANT.resetDay)ANT.resetDay();
+    if(typeof scheduleAmbientEvent==='function') scheduleAmbientEvent();
 
     // 1. 전날 이벤트를 먼저 정리하여 방치(Neglect) 플래그를 확정합니다.
     _autoCompleteDayEvents(currentDay-1);
@@ -570,15 +571,17 @@ const _DC = {
       {f:'r',t:'형한테 젤 먼저 알리는 거예요 사실'},
     ],
     // E3 루트 — 고재엽 경고 + 선형이 OK
+    // *Claude 수정(2026-09-16): data.js CHAT_D5_202_WARNING 재작업(빌라 이상하다
+    // 대사 제거, "얘기가 너무 중복돼" 지적)과 동일한 사유로 여기 축약본도 맞춰 교체.
+    // 이 텍스트는 '다음날' 버튼으로 스킵했을 때 채팅 기록에 그대로 남으므로
+    // 실제 대사와 어긋나면 안 됨.
     '202_e3':[
-      {f:'r',t:'이 빌라.'},
-      {f:'r',t:'누군가 설계한 것 같아요.'},
-      {f:'r',t:'일반 주거용이 아닌 것처럼.'},
-      {f:'r',t:'벽 두께. 케이블. 소리 주기.'},
-      {f:'s',t:'솔직히, 저도 이상하다고 생각해요.'},
-      {f:'r',t:'그렇군요.'},
-      {f:'r',t:'그럼 내일 잠깐 시간 되세요?'},
-      {f:'r',t:'드릴 게 있어요.'},
+      {f:'r',t:'경비원님.'},
+      {f:'r',t:'낮에 계단에서 염지혜씨 마주쳤는데, 안색이 안 좋더라고요.'},
+      {f:'r',t:'...그거랑 별개로, 예전에 찍어둔 사진 중에 신경 쓰이는 게 있어서요.'},
+      {f:'s',t:'무슨 사진인데요?'},
+      {f:'r',t:'말로 설명하긴 그래서요.'},
+      {f:'r',t:'그럼 내일 잠깐 시간 되세요? 직접 보여드릴게요.'},
     ],
     '201_e3':[
       {f:'r',t:'아무것도 아니에요'},
@@ -1732,10 +1735,25 @@ function checkDayAutoAdvance(){
   _dayAutoAdvanced[day]=true;
   _dayAdvancing=true;
   // 방금 뜬 대사/토스트/채팅 답장이 자연스럽게 끝날 시간을 준 뒤 넘어간다.
-  setTimeout(()=>{
-    _dayAdvancing=false;
-    if(currentDay===day) advanceDay();
-  }, 3500);
+  setTimeout(()=>{ _tryAdvanceDayWhenIdle(day); }, 3500);
+}
+
+// 마지막 방문의 closeFace()가 checkTriggers()를 부르는 시점(=그 방문이 이미 닫힌 뒤)과,
+// 위 3.5초 대기가 끝나는 시점 사이에 플레이어가 다른 집(혹은 같은 집)을 또 열어볼 수 있다.
+// 그 상태에서 그대로 advanceDay()를 부르면 열려 있던 대면/장소 화면이 중간에 잘리고
+// 그 잔여 내용이 다음날로 새는 것처럼 보인다(실사고 재현: Cqjo, "방문하자마자 다음날로
+// 넘어가고 다음날에 집방문한게 계속되고", 2026-09-16). 대면(#face-screen)이나 장소
+// (#loc-screen) 화면이 열려 있는 동안은 넘기지 않고, 닫힐 때까지 짧게 재확인만 반복한다.
+function _tryAdvanceDayWhenIdle(day){
+  if(currentDay!==day){ _dayAdvancing=false; return; } // 이미 다른 경로로 날짜가 바뀌었으면 중단
+  const faceOpen=document.getElementById('face-screen')?.classList.contains('on');
+  const locOpen=document.getElementById('loc-screen')?.classList.contains('on');
+  if(faceOpen||locOpen){
+    setTimeout(()=>_tryAdvanceDayWhenIdle(day), 500);
+    return;
+  }
+  _dayAdvancing=false;
+  advanceDay();
 }
 
 const pendingChatChoice={};
@@ -1951,6 +1969,16 @@ function loadChatScript(id){
     }
     return;
   }
+
+  // 메시지가 아직 순차 출력 중이면(다른 탭에 갔다가 돌아온 경우 포함) 새 스텝을 건드리지
+  // 않는다. 이 가드가 없으면: 스텝 시작 시 곧바로 세팅되는 MSGS_SHOWN_<id> 플래그 때문에,
+  // 메시지 시퀀스가 다 끝나기도 전에(즉 pendingChatChoice가 아직 안 세팅된 시점에)
+  // loadChatScript가 재호출되면(예: 선형이 메시지가 오는 중에 CCTV 탭 갔다가 채팅으로
+  // 돌아옴) 아래 for문이 "이미 보여준 스텝"으로 오인해 DONE_EVENTS에 조기 등록해버리고
+  // continue — 선택지(답장 버튼)가 영원히 안 뜨고, markNewMsg도 안 불려서 초록 알림도
+  // 안 뜬 채로 그 스텝이 조용히 소실된다. 실사고 재현(Cqjo, 201호 EVT_002_CHAT, 2026-09-16).
+  const _q=_getQueue(id);
+  if(_q.running||_q.msgs.length||_q._pendingLine) return;
 
   if(!scripts||!scripts.length){box.innerHTML='';return;}
 
@@ -2191,6 +2219,11 @@ function bigCC(l){
   if(img){
     img.style.visibility='visible';
     img.src='배경/CCTV/'+name+'.png';
+    // 경비원 일상 플레이버 이벤트 — 이 카메라에 발견된 이상 상황 있으면 화면만 교체(발견용, 해결은 현장에서)
+    const _ambLoc=CAM_TO_LOC[name];
+    if(ambientEvent && ambientEvent.revealed && _ambLoc && ambientEvent.loc===_ambLoc){
+      img.src=ambientEvent.variant.img;
+    }
   }
   document.getElementById('ccbig').classList.add('on');
   document.getElementById('ccbigtitle').textContent='■ '+l;
@@ -2199,8 +2232,7 @@ function bigCC(l){
   startCCHudClock();
   const gotoBox=document.getElementById('cc-goto-btns');
   if(gotoBox){
-    const locMap={'1F 복도':'1F복도','2F 복도':'2F복도','쓰레기장':'쓰레기장','흡연실':'흡연실'};
-    const locName=locMap[name];
+    const locName=CAM_TO_LOC[name];
     // ── Day4 CLUE_001 — 2F 복도 화면에서 멈춘 타임스탬프를 직접 클릭해야 열린다 (행동요구형)
     //    노션 EVT_D4_001: 새 UI 없이 클릭 한 번 + 단서 토스트로 끝낸다.
     if(currentDay===4 && name==='2F 복도' && !DONE_EVENTS.has('EVT_D4_001_DONE')){
@@ -2282,6 +2314,105 @@ function showCenterNote(text){
   c.classList.add('show');
   if(c._t)clearTimeout(c._t);
   c._t=setTimeout(()=>{c.classList.remove('show');}, 1600);
+}
+
+// ═══════════════════════════════════════════════════════
+// 경비원 일상 플레이버 이벤트 ("CCTV 조사" 랜덤 이상 상황)
+// — 메인 서사 flag/DONE_EVENTS와 완전히 분리된 반복 레이어.
+// 매일(마지막날 Day6 제외) 확률로 하나 배정 → 하루 중 랜덤 시점에 "발견됨" 상태가 됨
+// → CCTV/썸네일에 변형 사진 노출 + CCTV 탭 배지 점등 → 플레이어가 해당 장소로 이동해서
+//   화면(사진) 클릭(hotspot 있을 때) 또는 선택지(hotspot 없을 때)로 해결.
+// 데이터 원본: data.js의 AMBIENT_EVENTS. 단서 연동은 자리만 열어둠(variant.clue, 현재 미사용).
+// CAM_TO_LOC: bigCC 카메라 이름(공백 있음) → LOC_SCRIPTS/gotoLocation 장소 키(공백 없음) 매핑.
+const CAM_TO_LOC={'1F 복도':'1F복도','2F 복도':'2F복도','쓰레기장':'쓰레기장','흡연실':'흡연실'};
+const AMBIENT_CHANCE=0.35;               // 하루에 이벤트가 배정될 확률
+const AMBIENT_DELAY_MIN=20000, AMBIENT_DELAY_MAX=90000; // 배정 후 "발견됨"으로 바뀌기까지 대기(테스트/체감용 시간, 실제 하루 흐름에 맞춰 조정 가능)
+let ambientEvent=null;   // {loc, variant, revealed} — revealed=false면 아직 화면엔 안 보임(대기중)
+let _ambientTimer=null;
+
+// 하루 시작 시 호출(opAdvance/advanceDay). 이전 이벤트를 정리하고 새로 하나 배정 시도.
+function scheduleAmbientEvent(){
+  if(_ambientTimer){clearTimeout(_ambientTimer);_ambientTimer=null;}
+  ambientEvent=null;
+  updateAmbientBadge();
+  updateCCThumbnails();
+  if(currentDay===6)return; // *마지막날엔 안 뜨게
+  if(typeof AMBIENT_EVENTS==='undefined')return;
+  const locs=Object.keys(AMBIENT_EVENTS).filter(l=>(AMBIENT_EVENTS[l]||[]).length>0);
+  if(!locs.length)return;
+  let loc, pool;
+  // *Day1엔 확률과 무관하게 흡연실 꽁초 이벤트가 반드시 한 번은 뜨게(튜토리얼성 첫 노출).
+  //  흡연실 콘텐츠가 없으면(추후 삭제 등) 일반 랜덤 로직으로 자연스럽게 폴백.
+  if(currentDay===1 && (AMBIENT_EVENTS['흡연실']||[]).length){
+    loc='흡연실';
+    pool=AMBIENT_EVENTS[loc];
+  } else {
+    if(Math.random()>AMBIENT_CHANCE)return;
+    loc=locs[Math.floor(Math.random()*locs.length)];
+    pool=AMBIENT_EVENTS[loc];
+  }
+  const variant=pool[Math.floor(Math.random()*pool.length)];
+  ambientEvent={loc, variant, revealed:false};
+  const delay=AMBIENT_DELAY_MIN+Math.random()*(AMBIENT_DELAY_MAX-AMBIENT_DELAY_MIN);
+  _ambientTimer=setTimeout(()=>{
+    if(!ambientEvent)return;
+    ambientEvent.revealed=true;
+    updateAmbientBadge();
+    updateCCThumbnails();
+  }, delay);
+}
+// 현장에서 해결(hotspot 클릭 또는 선택지 선택 시 호출).
+function resolveAmbientEvent(){
+  if(!ambientEvent)return;
+  showCenterNote(ambientEvent.variant.resolveMsg||'정리했다.');
+  SND.play('탭');
+  // 지금 이 장소 화면(#loc-screen)에 그대로 있는 중이면, 배경 사진을 원래(깨끗한) 사진으로
+  // 되돌린다. resolveAmbientEvent()는 gotoLocation() 밖에서(예: CCTV 화면)도 호출될 수 있어서
+  // locScript.locName이 지금 해결한 장소와 같을 때만 되돌린다 — 실사고 반영(Cqjo: "꽁초
+  // 쓸었을때는 원래화면사진으로 전환돼야지", 2026-09-16).
+  if(typeof locScript!=='undefined' && locScript && locScript.locName===ambientEvent.loc){
+    const bg=document.getElementById('loc-bg-img');
+    const orig=LOC_SCRIPTS[ambientEvent.loc];
+    if(bg && orig){
+      let bgPath = orig.bg.replace('.png', '');
+      if(!bgPath.includes('/')) bgPath = '배경/' + bgPath + '.png';
+      else bgPath = orig.bg;
+      bg.src = bgPath;
+    }
+  }
+  if(_ambientTimer){clearTimeout(_ambientTimer);_ambientTimer=null;}
+  ambientEvent=null;
+  updateAmbientBadge();
+  updateCCThumbnails();
+  const layer=document.getElementById('loc-ambient-hotspot');
+  if(layer)layer.innerHTML='';
+}
+function updateAmbientBadge(){
+  const badge=document.getElementById('tnd-cctv');
+  if(badge)badge.style.display=(ambientEvent&&ambientEvent.revealed)?'inline-block':'none';
+}
+// CCTV 조작 탭의 4개 썸네일 이미지를 이상 상황 사진으로(있으면) 교체/원복.
+function updateCCThumbnails(){
+  const map={'1F복도':'cfimg-1f','2F복도':'cfimg-2f','쓰레기장':'cfimg-trash','흡연실':'cfimg-smoke'};
+  Object.entries(map).forEach(([loc,elId])=>{
+    const img=document.getElementById(elId);
+    if(!img)return;
+    const camName=Object.keys(CAM_TO_LOC).find(k=>CAM_TO_LOC[k]===loc)||loc;
+    if(ambientEvent&&ambientEvent.revealed&&ambientEvent.loc===loc){
+      img.src=ambientEvent.variant.img;
+    }else{
+      img.src='배경/CCTV/'+camName+'.png';
+    }
+  });
+}
+// 현장(#loc-screen) 화면 위에 이상 상황 클릭 지점을 그림. variant.hotspot 좌표(1672×941 기준)가
+// 있을 때만 사용 — 없으면 gotoLocation() 쪽에서 대신 선택지 버튼을 붙인다.
+function renderLocAmbientHotspot(variant){
+  const layer=document.getElementById('loc-ambient-hotspot');
+  if(!layer)return;
+  if(!variant||!variant.hotspot){layer.innerHTML='';return;}
+  const d=variant.hotspot.map(p=>p.join(',')).join(' ');
+  layer.innerHTML=`<polygon class="cc-hotspot" points="${d}" onclick="resolveAmbientEvent()"><title>조사</title></polygon>`;
 }
 
 let saveT=null;
@@ -2989,6 +3120,10 @@ function _openLocScene(resId, stateKey){
 
 function gotoLocation(locName){
   closeCC();
+  // 이전 방문에서 남아있을 수 있는 이상 상황 클릭 지점을 매번 지우고 시작
+  // (씬 인터셉트로 return 되는 경로도 있으므로 여기서 무조건 초기화).
+  const _ambHotLayer=document.getElementById('loc-ambient-hotspot');
+  if(_ambHotLayer) _ambHotLayer.innerHTML='';
   // ※ 2026-09-06 추가 — "그날 그 장소에 실제로 갔다"를 남긴다.
   //   게시판의 익명 글쓴이가 "오늘 쓰레기장 가셨더라고요"처럼 그날 행적을 짚는데,
   //   예전엔 방문 여부와 무관하게 시간만 되면 글이 올라와서, 가보기도 전에 누가
@@ -3119,6 +3254,28 @@ function gotoLocation(locName){
   if(!bgPath.includes('/')) bgPath = '배경/' + bgPath + '.png';
   else bgPath = script.bg;
   bg.src = bgPath;
+  // 경비원 일상 플레이버 이벤트 — 이 장소에 발견된 이상 상황이 있으면 화면을 변형 사진으로 교체
+  const _ambHere = (ambientEvent && ambientEvent.revealed && ambientEvent.loc===locName) ? ambientEvent : null;
+  if(_ambHere){
+    bg.src = _ambHere.variant.img;
+    if(_ambHere.variant.hotspot){
+      // 사진 속 대상을 직접 클릭해서 해결하는 방식 — desc 한 줄만 보여주고, 그 다음엔
+      // 원래 장소 대사/선택지 대신 대사창을 통째로 숨겨서 순수하게 사진만 보고 찾아
+      // 클릭하게 한다(CCTV 조사 화면과 동일한 느낌). 대사창이 화면 하단을 가리고 있으면
+      // 클릭해서 치우는 부분이 시야를 가려 불편하다는 실사고 반영(Cqjo, 2026-09-16).
+      locScript.lines = _ambHere.variant.desc ? [_ambHere.variant.desc] : [];
+      locScript.choices = [];
+      locScript.choiceResp = [];
+      locScript._ambInvestigate = true;
+      renderLocAmbientHotspot(_ambHere.variant);
+    } else {
+      // hotspot 좌표가 아직 없으면 선택지 방식으로 대체 — 이 경우는 대사창을 계속 씀
+      if(_ambHere.variant.desc) locScript.lines = [_ambHere.variant.desc, ...locScript.lines];
+      locScript.choices = [...(locScript.choices||[]), _ambHere.variant.resolveChoiceLabel||'(치운다)'];
+      locScript.choiceResp = [...(locScript.choiceResp||[]), ''];
+      locScript._ambientResolveIdx = locScript.choices.length - 1;
+    }
+  }
 
   document.getElementById('loc-namebox').textContent='▣ '+script.label;
   document.getElementById('loc-hdr-title').textContent='■ '+script.label;
@@ -3134,6 +3291,9 @@ function gotoLocation(locName){
   document.getElementById('loc-dname').style.display='none';
   document.getElementById('loc-choices').innerHTML='';
   document.getElementById('loc-advance').style.display='none';
+  // 이전 방문에서 치우는 중 숨겨놨을 수 있는 대사창을 매번 원상복구하고 시작
+  const _dboxWrap=document.getElementById('loc-dbox-wrap');
+  if(_dboxWrap) _dboxWrap.style.display='';
 
   document.getElementById('loc-screen').classList.add('on');
   showLocLine();
@@ -3162,6 +3322,13 @@ function showLocLine(){
     } else {
       locPhase='choice';
       adv.style.display='none';
+      if(locScript._ambInvestigate){
+        // 치우는 부분 — 대사창을 통째로 숨기고 사진 위 hotspot만 남긴다.
+        // resolveAmbientEvent()가 클릭을 처리하며, 나가는 건 상단 "← 경비실로" 버튼으로.
+        const _dboxWrap=document.getElementById('loc-dbox-wrap');
+        if(_dboxWrap) _dboxWrap.style.display='none';
+        return;
+      }
       if(locScript.choices&&locScript.choices.length){
         ch.innerHTML=locScript.choices.map((c,i)=>
           `<button class="loc-choice" onclick="pickLocChoice(${i})">${c}</button>`
@@ -3183,6 +3350,9 @@ function advanceLocDialogue(){
 }
 
 function pickLocChoice(i){
+  if(locScript && locScript._ambientResolveIdx===i){
+    resolveAmbientEvent();
+  }
   const resp=locScript.choiceResp?.[i];
   const ch=document.getElementById('loc-choices');
   const adv=document.getElementById('loc-advance');
@@ -3596,6 +3766,7 @@ function opAdvance(){
       renderCL();
       renderBoard();
       updateHome();
+      if(typeof scheduleAmbientEvent==='function') scheduleAmbientEvent();
       log('관리 시스템 온라인. 오늘의 일지를 시작하세요.');
       showFirstTimeGuide();
       setTimeout(()=>triggerEventsForDay(1), 5000);

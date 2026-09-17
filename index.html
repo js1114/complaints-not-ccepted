@@ -656,6 +656,9 @@ body{
   background-image:radial-gradient(circle,rgba(255,255,255,.08) .8px,transparent .8px);
   background-size:6px 6px;
 }
+/* 경비원 일상 플레이버 이벤트 — 현장 화면에서 이상 상황을 직접 클릭해서 해결하는 지점.
+   CCTV 확대화면(#cc-hotspot-layer)과 동일하게 object-fit:cover 기준 슬라이스. .cc-hotspot 스타일 재사용. */
+#loc-ambient-hotspot{position:absolute;inset:0;width:100%;height:100%;z-index:2;}
 /* 장소 표시 박스 */
 #loc-namebox{
   position:absolute;top:14px;left:14px;z-index:5;
@@ -664,9 +667,14 @@ body{
   font-size:12px;color:#fff;font-weight:bold;letter-spacing:2px;
 }
 /* 장소 캐릭터 스프라이트 */
+/* pointer-events:none — 클릭 핸들러가 전혀 없는 순수 장식 레이어인데, inset:0 전체화면
+   div라서 기본값(auto)이면 화면 전체 클릭을 가로챈다. 이 때문에 그 아래(z-index:2)
+   #loc-ambient-hotspot의 이상 상황 클릭 지점이 항상 먹통이었다(흡연실 꽁초 등).
+   실사고 재현(Cqjo, 흡연실 꽁초 hotspot 클릭 안 됨, 2026-09-16). */
 #loc-sprites{
   position:absolute;inset:0;z-index:3;
   display:flex;align-items:flex-end;justify-content:center;
+  pointer-events:none;
 }
 .loc-sprite-img{
   height:80%;width:auto;object-fit:contain;
@@ -1813,7 +1821,7 @@ input[type=range].s-slider::-moz-range-thumb{
         <button class="tb" onclick="sw('home')">홈</button>
         <button class="tb" onclick="sw('complaints')">민원함<span class="tndot" id="tnd-c"></span></button>
         <button class="tb" onclick="sw('board')">게시판<span class="tndot" id="tnd-b" style="display:none"></span></button>
-        <button class="tb" onclick="sw('cctv')">CCTV</button>
+        <button class="tb" onclick="sw('cctv')">CCTV<span class="tndot" id="tnd-cctv" style="display:none"></span></button>
         <button class="tb" onclick="sw('log')">관리일지</button>
         <button class="tb" onclick="sw('clues')">단서<span class="tndot" id="tnd-clue" style="display:none"></span></button>
       </div>
@@ -1969,10 +1977,10 @@ input[type=range].s-slider::-moz-range-thumb{
 
         <!-- CCTV -->
         <div class="pn" id="pn-cctv">
-          <div class="cf" onclick="bigCC('CAM-01 / 1F 복도')"><img class="cf-bg" src="배경/CCTV/1F 복도.png" onerror="this.style.visibility='hidden'" alt=""><div class="cfsc"></div><div class="cf-phosphor"></div><div class="cfn"></div><div class="cfscan"></div><div class="cfband"></div><div class="cf-glitch"></div><div class="cflbl">CAM-01 / 1F 복도</div><div class="cfrec">REC</div><div class="cftime" id="ct0"></div></div>
-          <div class="cf" onclick="bigCC('CAM-02 / 2F 복도')"><img class="cf-bg" src="배경/CCTV/2F 복도.png" onerror="this.style.visibility='hidden'" alt=""><div class="cfsc"></div><div class="cf-phosphor"></div><div class="cfn"></div><div class="cfscan"></div><div class="cfband" style="animation-duration:7s;animation-delay:-2.5s"></div><div class="cf-glitch"></div><div class="cflbl">CAM-02 / 2F 복도</div><div class="cfrec">REC</div><div class="cftime" id="ct1"></div></div>
-          <div class="cf" onclick="bigCC('CAM-03 / 쓰레기장')"><img class="cf-bg" src="배경/CCTV/쓰레기장.png" onerror="this.style.visibility='hidden'" alt=""><div class="cfsc"></div><div class="cf-phosphor"></div><div class="cfn"></div><div class="cfscan"></div><div class="cfband" style="animation-duration:6s;animation-delay:-1.3s"></div><div class="cf-glitch"></div><div class="cflbl">CAM-03 / 쓰레기장</div><div class="cfrec">REC</div><div class="cftime" id="ct2"></div></div>
-          <div class="cf" onclick="bigCC('CAM-04 / 흡연실')"><img class="cf-bg" src="배경/CCTV/흡연실.png" onerror="this.style.visibility='hidden'" alt=""><div class="cfsc"></div><div class="cf-phosphor"></div><div class="cfn"></div><div class="cfscan"></div><div class="cfband" style="animation-duration:8.5s;animation-delay:-4s"></div><div class="cf-glitch"></div><div class="cflbl">CAM-04 / 흡연실</div><div class="cfrec">REC</div><div class="cftime" id="ct3"></div></div>
+          <div class="cf" onclick="bigCC('CAM-01 / 1F 복도')"><img class="cf-bg" id="cfimg-1f" src="배경/CCTV/1F 복도.png" onerror="this.style.visibility='hidden'" alt=""><div class="cfsc"></div><div class="cf-phosphor"></div><div class="cfn"></div><div class="cfscan"></div><div class="cfband"></div><div class="cf-glitch"></div><div class="cflbl">CAM-01 / 1F 복도</div><div class="cfrec">REC</div><div class="cftime" id="ct0"></div></div>
+          <div class="cf" onclick="bigCC('CAM-02 / 2F 복도')"><img class="cf-bg" id="cfimg-2f" src="배경/CCTV/2F 복도.png" onerror="this.style.visibility='hidden'" alt=""><div class="cfsc"></div><div class="cf-phosphor"></div><div class="cfn"></div><div class="cfscan"></div><div class="cfband" style="animation-duration:7s;animation-delay:-2.5s"></div><div class="cf-glitch"></div><div class="cflbl">CAM-02 / 2F 복도</div><div class="cfrec">REC</div><div class="cftime" id="ct1"></div></div>
+          <div class="cf" onclick="bigCC('CAM-03 / 쓰레기장')"><img class="cf-bg" id="cfimg-trash" src="배경/CCTV/쓰레기장.png" onerror="this.style.visibility='hidden'" alt=""><div class="cfsc"></div><div class="cf-phosphor"></div><div class="cfn"></div><div class="cfscan"></div><div class="cfband" style="animation-duration:6s;animation-delay:-1.3s"></div><div class="cf-glitch"></div><div class="cflbl">CAM-03 / 쓰레기장</div><div class="cfrec">REC</div><div class="cftime" id="ct2"></div></div>
+          <div class="cf" onclick="bigCC('CAM-04 / 흡연실')"><img class="cf-bg" id="cfimg-smoke" src="배경/CCTV/흡연실.png" onerror="this.style.visibility='hidden'" alt=""><div class="cfsc"></div><div class="cf-phosphor"></div><div class="cfn"></div><div class="cfscan"></div><div class="cfband" style="animation-duration:8.5s;animation-delay:-4s"></div><div class="cf-glitch"></div><div class="cflbl">CAM-04 / 흡연실</div><div class="cfrec">REC</div><div class="cftime" id="ct3"></div></div>
         </div>
 
         <!-- 관리일지 -->
@@ -2091,6 +2099,7 @@ input[type=range].s-slider::-moz-range-thumb{
   <div id="loc-main">
     <img id="loc-bg-img" src="" alt="" onerror="this.style.visibility='hidden'">
     <div id="loc-bg-overlay"></div>
+    <svg id="loc-ambient-hotspot" viewBox="0 0 1672 941" preserveAspectRatio="xMidYMid slice"></svg>
     <div id="loc-namebox" id="loc-name-lbl">???</div>
     <div id="loc-sprites"></div>
     <div id="loc-dbox-wrap">
