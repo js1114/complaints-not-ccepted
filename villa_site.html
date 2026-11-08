@@ -1768,7 +1768,7 @@ input[type=range].s-slider::-moz-range-thumb{
   <div id="topbar">
     <div id="tb-l">
       <img class="tb-sys-img" src="ui/로꼬.png" alt="VILLA-SYS">
-      <img class="tb-title-img" src="ui/관리시스템.png" alt="행복빌라 경비 관리 시스템">
+      <img class="tb-title-img" src="ui/관리시스템.png" alt="행복빌라 경비 관리 시스템" onclick="exhResetClick()" style="cursor:pointer;">
       <span class="tb-online"><span class="blink">●</span>&nbsp;ONLINE</span>
     </div>
     <div id="tb-r">
@@ -2215,5 +2215,29 @@ input[type=range].s-slider::-moz-range-thumb{
 <script src="data.js?v=1788370441"></script>
 <script src="engine.js?v=1788370441"></script>
 
+</body>
+</html>
+<!-- ══ 활동 감지 자동 새로고침 (3분) ══ -->
+<script>
+(function() {
+  let idleTimer = null;
+  const IDLE_TIME = 3 * 60 * 1000; // 3분 = 180000ms
+
+  function resetIdleTimer() {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      location.reload();
+    }, IDLE_TIME);
+  }
+
+  // 활동 이벤트 감지
+  ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'].forEach(event => {
+    document.addEventListener(event, resetIdleTimer, true);
+  });
+
+  // 초기 타이머 설정
+  resetIdleTimer();
+})();
+</script>
 </body>
 </html>
