@@ -7,7 +7,7 @@
 //   false = 개발 빌드 : [루트 선택][다음날 →] 보임 · 무입력 자동리셋 없음 · 상단에 [DEV] 배지 표시
 //   true  = 전시 빌드 : DEV 버튼 숨김 · 3분 무입력 시 자동리셋 · 배지 없음
 //   ※ 전시 빌드에서도 Ctrl+Shift+D 를 누르면 DEV 버튼이 나온다 (심사·데모용)
-const EXHIBIT_MODE = false;
+const EXHIBIT_MODE = true;
 
 function realNameFor(id){
   // FACE_SCRIPTS는 이벤트ID로 키가 잡혀있어(예: 'EVT_101_INIT') 입주민ID('101')로 직접
@@ -158,7 +158,7 @@ function updateHome(){
   const hbd=document.getElementById('hs-board');
   if(hbd)hbd.textContent=BOARD_POSTS.length+'건';
   const sub=document.getElementById('home-sub');
-  if(sub)sub.textContent=uc>0?'미확인 민원 감지 — 즉시 확인':'시스템 온라인 — 이상 없음';
+  if(sub){ try{ _refreshTodoHint(); }catch(e){ sub.textContent=uc>0?'미확인 민원 감지 — 즉시 확인':'시스템 온라인 — 이상 없음'; } }
   renderResList();
 }
 // 홈 화면 좌측 "주민 목록" — 이름/나이 공개 여부·호감도를 실시간 반영
@@ -432,6 +432,7 @@ function advanceDay(skipNarration=false){
     if(typeof scheduleAmbientEvent==='function') scheduleAmbientEvent();
 
     // 1. 전날 이벤트를 먼저 정리하여 방치(Neglect) 플래그를 확정합니다.
+    _dayStarting=true;   // 새 날 이벤트가 깔리기 전(아래 800ms)엔 문 방문을 잠깐 미룬다 — 전날 씬이 다시 열리는 것 방지
     _autoCompleteDayEvents(currentDay-1);
     _snapChatBase();   // 새 하루 기준선
     Object.keys(_doorVisitedToday).forEach(k=>delete _doorVisitedToday[k]);   // 새 하루 방문 기록 초기화
@@ -441,13 +442,20 @@ function advanceDay(skipNarration=false){
       const goBtn=document.getElementById('day-go-btn');
       if(dayBtn) dayBtn.style.display='none';
       if(goBtn){
-        goBtn.textContent='[ 일과 종료 (엔딩 진행) ]';
+        goBtn.textContent='[ 일과 종료 ]';
         goBtn.onclick=()=>{ goBtn.onclick=null; startEnding(); };
       }
+      // Day6 [일과 종료]는 DEV 버튼이 아니라 실제 플레이어가 엔딩으로 가는 유일한 버튼(END_3 씬 제외).
+      // 전시 모드에서 DEV 묶음(#day-btn-wrap)이 숨겨져 있어도 이 버튼만은 보이게 한다.
+      _day6EndVisible = true;
+      const wrap=document.getElementById('day-btn-wrap');
+      if(wrap) wrap.style.display='';
+      if(typeof log==='function') log('오늘이 마지막 근무일입니다. 할 일을 마치면 상단 [ 일과 종료 ]를 누르세요.');
     }
 
     setTimeout(()=>{
       triggerEventsForDay(currentDay);
+      _dayStarting=false;
     }, 800);
   }, skipNarration);
 }
@@ -913,7 +921,11 @@ function _autoCompleteDayEvents(day){
     // 조건부 상태 전환(개미 씬 등)은 조건을 만족할 때만 적용한다.
     const condOk = (!evt.requireFlag||getFlag(evt.requireFlag))
                 && (!evt.requireNotFlag||!getFlag(evt.requireNotFlag));
-    if(evt.type==='state_change' && condOk){
+    // 이미 실제로 실행된 state_change는 다시 적용하지 않는다.
+    // (예전엔 하루를 정상적으로 끝내도 그날의 state_change를 전부 다시 적용해서,
+    //  끝난 씬이 다음 날 되살아났다 — Day4에 202호를 가면 Day3 사진 심문이 또 나오는 식.
+    //  이 백필은 DEV 스킵처럼 '그 이벤트가 아예 안 돌았던 경우'에만 필요하다.)
+    if(evt.type==='state_change' && condOk && !DONE_EVENTS.has(evt.id)){
       (evt.changes||[]).forEach(c=>{
         if(c.resId) RES_EVENT_STATE[c.resId]=c.newState;
       });
@@ -1037,7 +1049,14 @@ function avgFavor(){
   return ids.reduce((s,k)=>s+RES[k].favor,0)/ids.length;
 }
 
+var _endingRunning=false;
 function startEnding(){
+  // 엔딩 연출 도중 [새 메시지] 알림 등으로 대면/장소 화면이 닫히면 엔딩이 중간에 끊기고
+  // [일과 종료] 버튼도 이미 소모돼 게임이 멈췄다. 엔딩이 시작되면 그런 경로를 전부 막는다.
+  if(_endingRunning) return;
+  _endingRunning=true;
+  { const g=document.getElementById('global-msg-alert'); if(g) g.classList.remove('on');
+    const w=document.getElementById('day-btn-wrap'); if(w) w.style.display='none'; }
   _autoCompleteDayEvents(6);
 
   const route=calcEnding();
@@ -1576,7 +1595,9 @@ function executeEvent(evt){
     const _queueBusy=(()=>{ const q=_chatQueues[resId]; return q && (q.running||q._pendingLine); })();
     if(_pendUnanswered||_queueBusy){
       const _day=currentDay;
-      setTimeout(()=>{ if(currentDay===_day) executeEvent(evt); }, 2000);
+      // executeEvent 맨 앞에서 이미 DONE_EVENTS에 들어갔기 때문에 그냥 다시 부르면
+      // 첫 줄 DONE 체크에 막혀 이 채팅이 영영 안 온다(Day5 102호 오디션 채팅 실종 → 하루가 안 끝남).
+      setTimeout(()=>{ if(currentDay===_day){ DONE_EVENTS.delete(evt.id); executeEvent(evt); } }, 2000);
       return;
     }
     if(step){
@@ -1628,7 +1649,8 @@ function executeEvent(evt){
       if(currentDay !== _day) return;   // 날이 바뀌면 취소
       const fs = document.getElementById('face-screen');
       const cc = document.getElementById('ccbig');
-      if((fs&&fs.classList.contains('on')) || (cc&&cc.classList.contains('on'))){
+      const ls = document.getElementById('loc-screen');
+      if((fs&&fs.classList.contains('on')) || (cc&&cc.classList.contains('on')) || (ls&&ls.classList.contains('on'))){
         if(++_tries < 90) setTimeout(_tryOpen, 1000);
         return;
       }
@@ -1726,6 +1748,116 @@ function _isDayComplete(day){
     default: return false; // Day6은 [일과 종료] 버튼으로 엔딩 진행 — 자동 진행 대상 아님
   }
 }
+
+// ══════════════════════════════════════════════════════════
+// 오늘 남은 업무 안내 (홈 SYS 위젯 한 줄)
+// 처음 하는 사람은 "하루가 왜 안 끝나는지" 알 방법이 없었다(예: Day1 각 집 두 번째 방문).
+// _isDayComplete 의 남은 조건을 읽어서, 지금 실제로 할 수 있는 것 하나를 관리시스템 상태줄로 알려준다.
+// 대사/스토리는 건드리지 않고 '어디로 가면 되는지'만 짚는다.
+// ══════════════════════════════════════════════════════════
+const _LOC_TODO = { // 장소에서만 열리는 씬의 완료 플래그 → 장소
+  'EVT_D2_001_A_DONE':'쓰레기장','EVT_D2_001_B_WAIT_DONE':'쓰레기장',
+  'EVT_D3_002_DONE':'쓰레기장',
+  'EVT_D5_002_DONE':'쓰레기장','EVT_D5_003_DONE':'2층 복도'
+};
+// 남은 조건 플래그의 '선행 조건'까지 펼친다.
+// 예: Day3 EVT_D3_003_DONE(202호 사진 심문)은 쓰레기장 사진 씬(EVT_D3_002_DONE)을 봐야 202호에 열린다.
+function _expandMissing(missing){
+  const set=new Set(missing);
+  for(let round=0; round<5; round++){
+    const before=set.size;
+    [...set].forEach(f=>{
+      const q1="'"+f+"'", q2='"'+f+'"';
+      Object.values(FACE_SCRIPTS).forEach(sc=>{
+        if(!sc || (sc.requireDay && sc.requireDay>currentDay)) return;
+        const j=JSON.stringify(sc);
+        if(!(j.includes(q1)||j.includes(q2))) return;
+        if(sc.requireFlag && !getFlag(sc.requireFlag)) set.add(sc.requireFlag);
+      });
+      (DAY_SEQUENCE[currentDay]||[]).forEach(ev=>{
+        if(ev.type!=='state_change' || !ev.trigger || !String(ev.trigger).startsWith('after:')) return;
+        const pre=String(ev.trigger).slice(6);
+        if(DONE_EVENTS.has(pre)) return;
+        const hit=(ev.changes||[]).some(c=>{ const sc=FACE_SCRIPTS[c.newState]; if(!sc) return false; const j=JSON.stringify(sc); return j.includes(q1)||j.includes(q2); });
+        if(hit) set.add(pre);
+      });
+    });
+    if(set.size===before) break;
+  }
+  return [...set];
+}
+function _missingDayFlags(day){
+  try{
+    const src=_isDayComplete.toString();
+    let part=(src.split(/case \d:/)[day]||'').split(/case \d:|default:/)[0];
+    part=part.replace(/\/\/[^\n]*/g,'');   // 주석 제거
+    const out=[];
+    // (getFlag('A')||getFlag('B')) 같은 OR 묶음: 하나라도 서 있으면 충족
+    part=part.replace(/\(\s*((?:getFlag\('[A-Za-z0-9_]+'\)\s*\|\|\s*)+getFlag\('[A-Za-z0-9_]+'\))\s*\)/g,(m,g)=>{
+      const fs=[...g.matchAll(/getFlag\('([A-Za-z0-9_]+)'\)/g)].map(x=>x[1]);
+      if(!fs.some(f=>getFlag(f))) out.push(...fs);
+      return '';
+    });
+    [...part.matchAll(/getFlag\('([A-Za-z0-9_]+)'\)/g)].forEach(m=>{ if(!getFlag(m[1])) out.push(m[1]); });
+    return [...new Set(out)];
+  }catch(e){ return []; }
+}
+function _sceneEligible(sc){
+  if(!sc) return false;
+  if(sc.requireFlag && !getFlag(sc.requireFlag)) return false;
+  if(sc.requireNotFlag && getFlag(sc.requireNotFlag)) return false;
+  if(sc.requireDay && currentDay<sc.requireDay) return false;
+  if(sc._requireFavor && (RES[sc._requireFavor.id]?.favor||0) < sc._requireFavor.min) return false;
+  return true;
+}
+// 이 호실 문을 두드리면 이어지는 씬(onEnd 체인 포함) 안에 아직 못 채운 조건 플래그가 있나
+function _doorHasTodo(resId, missing){
+  let key=RES_EVENT_STATE[resId], depth=0;
+  while(key && FACE_SCRIPTS[key] && depth<4){
+    const sc=FACE_SCRIPTS[key];
+    if(depth===0 && !_sceneEligible(sc)) return false;
+    const j=JSON.stringify(sc);
+    if(missing.some(f=>j.includes("'"+f+"'")||j.includes('"'+f+'"'))) return true;
+    key=sc.onEnd; depth++;
+  }
+  return false;
+}
+function _dayTodoHint(){
+  if(typeof _endingRunning!=='undefined' && _endingRunning) return '';
+  if(currentDay>=6) return '오늘 업무를 마치면 상단 [ 일과 종료 ]';
+  const rooms=['101','102','201','202','301'];
+  // 1) 민원
+  if(CLIST.some(c=>c.u)) return '미확인 민원 감지 — 즉시 확인';
+  if(CLIST.some(c=>c.replyChoices&&c.replyChoices.length&&!DONE_EVENTS.has(c.replyEvtId)&&!c.delivered))
+    return '민원함 — 답장하지 않은 민원이 있습니다';
+  // 2) 답장 대기 채팅
+  const waitChat=rooms.find(id=>{const p=pendingChatChoice[id];return p&&p.choices&&p.choices.length&&!DONE_EVENTS.has(p.evtId);});
+  if(waitChat) return (RES[waitChat]?.room||waitChat+'호')+' 메시지 — 답장 대기 중';
+  if(_isDayComplete(currentDay)) return '오늘 업무 완료 — 곧 근무가 종료됩니다';
+  const missing=_expandMissing(_missingDayFlags(currentDay));
+  // 3) 볼 일이 남은 집 + 오늘 아직 안 들른 집(Day2~5는 전 호실 순찰이 조건)
+  const doors=rooms.filter(id=>_doorHasTodo(id,missing));
+  const needPatrol=currentDay>=2 && !_allResidentsVisitedToday();
+  rooms.forEach(id=>{ if(needPatrol && !_doorVisitedToday[id] && !doors.includes(id)) doors.push(id); });
+  doors.sort();
+  if(doors.length) return '순찰 필요 — '+doors.map(id=>id+'호').join(', ')+' 방문';
+  // 4) 장소
+  const loc=[...new Set(missing.map(f=>_LOC_TODO[f]).filter(Boolean))];
+  if(loc.length) return '순찰 필요 — '+loc.join(', ')+' (CCTV에서 이동)';
+  // 5) Day1: 아직 안 가본 집
+  const unvisited=rooms.filter(id=>!_doorVisitedToday[id]);
+  if(unvisited.length) return '순찰 필요 — '+unvisited.map(id=>id+'호').join(', ')+' 방문';
+  return '시스템 온라인 — 새 연락을 기다리는 중';
+}
+function _refreshTodoHint(){
+  const sub=document.getElementById('home-sub');
+  if(!sub) return;
+  let t='';
+  try{ t=_dayTodoHint(); }catch(e){ t='시스템 온라인 — 이상 없음'; }
+  if(sub.textContent!==t) sub.textContent=t;
+  sub.style.color = /^시스템 온라인/.test(t) ? '#666' : '#ccc';   // 할 일이 있을 땐 눈에 띄게
+}
+setInterval(_refreshTodoHint, 1500);
 
 function checkDayAutoAdvance(){
   const day=currentDay;
@@ -2078,6 +2210,7 @@ function updateSidebarDots(){
 function updateGlobalMsgAlert(){
   const el=document.getElementById('global-msg-alert');
   if(!el)return;
+  if(typeof _endingRunning!=='undefined' && _endingRunning){ el.classList.remove('on'); return; }
   const pendingId=['301','202','201','102','101'].find(id=>newMsgFlags[id]);
   if(pendingId){
     const room=RES[pendingId]?RES[pendingId].room:pendingId+'호';
@@ -2091,6 +2224,7 @@ function updateGlobalMsgAlert(){
 
 // 전역 알림 클릭 — 지금 대면/장소 화면 등 무엇이 열려있든 다 닫고 그 채팅으로 바로 이동한다.
 function jumpToNewMsg(){
+  if(typeof _endingRunning!=='undefined' && _endingRunning) return;
   const pendingId=['301','202','201','102','101'].find(id=>newMsgFlags[id]);
   if(!pendingId)return;
   const faceOpen=document.getElementById('face-screen')?.classList.contains('on');
@@ -2203,14 +2337,30 @@ function selC(id){
   // 민원함에서 이 민원을 직접 열어본 순간, 비로소 채팅으로 전달된다.
   if(!c.delivered && c.resId){
     c.delivered=true;
-    markNewMsg(c.resId);
-    if(c.replyChoices && c.replyChoices.length){
-      pendingChatChoice[c.resId]={evtId:c.replyEvtId, choices:c.replyChoices};
-      if(curR===c.resId){
-        renderChat(c.resId);
-        showChatChoices(c.resId, c.replyChoices, c.replyEvtId);
-      }
-    }
+    _deliverComplaintChoices(c);
+  }
+}
+// 민원 답장 선택지를 채팅에 올린다.
+// 같은 호실에 아직 답 안 한 채팅 선택지(예: Day5 102호 오디션 합격 채팅)가 있으면
+// 예전엔 그걸 덮어써서 그 채팅이 통째로 사라졌고, 그 채팅 답장이 Day 진행 조건이라
+// 하루가 영영 안 끝나는 구멍이 생겼다. → 앞의 선택지에 답할 때까지 기다렸다가 올린다.
+function _deliverComplaintChoices(c){
+  if(!c.replyChoices || !c.replyChoices.length){ markNewMsg(c.resId); return; }
+  if(DONE_EVENTS.has(c.replyEvtId)) return;
+  const pend=pendingChatChoice[c.resId];
+  const busy=pend && pend.evtId!==c.replyEvtId && pend.choices && pend.choices.length && !DONE_EVENTS.has(pend.evtId);
+  const q=(typeof _chatQueues!=='undefined')?_chatQueues[c.resId]:null;
+  const qBusy=q && (q.running||q._pendingLine);
+  if(busy||qBusy){
+    const _day=currentDay;
+    setTimeout(()=>{ if(currentDay===_day) _deliverComplaintChoices(c); }, 1500);
+    return;
+  }
+  markNewMsg(c.resId);
+  pendingChatChoice[c.resId]={evtId:c.replyEvtId, choices:c.replyChoices};
+  if(curR===c.resId){
+    renderChat(c.resId);
+    showChatChoices(c.resId, c.replyChoices, c.replyEvtId);
   }
 }
 function bigCC(l){
@@ -2442,7 +2592,10 @@ function doVisit(){
 
 // ── [수정] openFace: 6일 차 부재 및 극단적 방치 상태를 대화창 나레이션으로 동적 구현 ──
 // 문닫힘 배경화면이 출력된 후, 대화창 내부 텍스트로 섬뜩하거나 비어있는 묘사들이 자연스럽게 타건됩니다.
+var _dayStarting=false;
 function openFace(resId){
+  if(typeof _endingRunning!=='undefined' && _endingRunning) return;   // 엔딩 연출 중 예약된 대면이 끼어들지 않게
+  if(_dayStarting){ setTimeout(()=>openFace(resId), 400); return; }
   if(typeof antHideFace==='function')antHideFace();
   const r=RES[resId];
   if(!r){console.error('[openFace] RES에 없는 ID:',resId);return;}
@@ -2504,6 +2657,12 @@ function openFace(resId){
 
   faceScript=JSON.parse(JSON.stringify(scripted));
 
+  // 대면 도중 [← 경비실로 돌아가기]로 빠져나가면 선택지 결과(플래그)가 안 남은 채 onEnd가 적용돼
+  // 그 씬을 영영 다시 못 보고, Day 자동 진행 조건도 못 채워 하루가 안 끝나는 구멍이 있었다.
+  // 씬이 끝날 때(_showFaceEnd)까지는 돌아가기 버튼을 숨긴다.
+  { const fb=document.getElementById('face-back'); if(fb) fb.style.display='none'; }
+
+  faceScript._openedState = RES_EVENT_STATE[resId];   // 열 때의 호실 상태 (closeFace에서 비교)
   faceScript.resId=resId;
   faceScript._endAfterLines=false;
   faceContinuation=null;
@@ -2638,7 +2797,7 @@ function showFaceLine(){
           } else {
             const charImg=document.getElementById('face-char-img');
             if(charImg){
-              if(fname==='x'){charImg.style.visibility='hidden';}
+              if(fname==='x'||/^\d{3}x$/.test(fname)){charImg.style.visibility='hidden';} // !101x 등 = 그 호실 캐릭터 숨김(파일 없음, 대면 처리 안 함)
               else{
                 charImg.style.visibility='visible';charImg.src='캐릭터/'+fname+'.png';charImg.onerror=()=>{};
                 if(faceScript?.resId) _markFaceMet(faceScript.resId);
@@ -2809,6 +2968,8 @@ function _showFaceEnd(){
   if(txt)txt.textContent='';
   if(dname)dname.textContent='';
   if(ch)ch.innerHTML='<button class="face-choice" onclick="closeFace()">(경비실로 돌아간다)</button>';
+  if(faceScript) faceScript._resolved=true;
+  { const fb=document.getElementById('face-back'); if(fb) fb.style.display=''; }
 }
 
 function pickFaceChoice(i){
@@ -2828,6 +2989,7 @@ function pickFaceChoice(i){
   }
 
   const id=faceScript.resId;
+  faceScript._resolved=true;   // 선택지 결과가 적용됨 = 이 씬은 소화된 것으로 본다
   if(result.favor&&result.favor!==0){
     RES[id].favor=Math.max(0,Math.min(100,RES[id].favor+result.favor));
     const favEl=document.getElementById('fc-fav');
@@ -2901,6 +3063,7 @@ function closeFace(){
   // 아직 살아있어서 사용자가 한 번 더 클릭하면 advanceDialogue → _showFaceEnd → closeFace가
   // 다시 실행돼 fade가 중첩되어 두 번 나오는 것처럼 보였다. 진행 중엔 재진입을 막는다.
   if(_closingFace)return;
+  if(typeof _endingRunning!=='undefined' && _endingRunning) return;   // 엔딩 연출 중엔 닫히지 않는다
   _closingFace=true;
   SND.stopVisit();
   // Day3 — 매소련 첫 대면 직후, 3층 계단에서 염지혜와 마주치는 씬으로 이어진다.
@@ -2912,6 +3075,19 @@ function closeFace(){
     _chain='EVT_D3_TIKI_002';
   }
   if(typeof antShowFace==='function')antShowFace();
+  // 씬을 끝까지 안 보고 닫힌 경우(새 메시지 알림 클릭 등으로 중간에 빠져나감):
+  // onEnd를 적용하면 플래그 없이 씬이 소모돼 다시 못 보고 Day 진행 조건도 영영 못 채운다.
+  // → 상태를 건드리지 않아 다음 방문 때 그 씬이 처음부터 다시 나오게 한다.
+  //   (복도/장소 씬은 _openLocScene이 호실 상태를 잠깐 빌려 쓰므로 원래 상태로 되돌린다.)
+  // 씬이 열려 있는 동안 다른 이벤트가 이 호실 상태를 새로 세팅했으면(새 날 시작 직후 등)
+  // 그 새 상태를 지켜야 한다. 덮어쓰면 방금 열린 다음 씬이 사라진다(Day3 102호 밴드 씬 실종 재현).
+  const _stateMoved = faceScript?.resId && RES_EVENT_STATE[faceScript.resId]!==faceScript._openedState;
+  if(_stateMoved){
+    // 그대로 둔다
+  } else
+  if(faceScript?.resId && !faceScript._resolved){
+    if(faceScript._isLocScene) RES_EVENT_STATE[faceScript.resId]=faceScript._locPrev;
+  } else
   if(faceScript?.resId){
     if(Object.prototype.hasOwnProperty.call(faceScript,'_nextState')){
       RES_EVENT_STATE[faceScript.resId]=faceScript._nextState; 
@@ -3105,6 +3281,7 @@ let _faceLineToken=0;
 // 그냥 덮어쓰면 그 호실 고유 씬(예: 301호 첫 대면)이 지워져 영영 안 나온다.
 // 원래 값을 기억했다가 씬이 끝나면 되돌린다.
 function _openLocScene(resId, stateKey){
+  if(typeof _dayStarting!=='undefined' && _dayStarting){ setTimeout(()=>_openLocScene(resId,stateKey), 400); return; }
   const prev = RES_EVENT_STATE[resId];
   const sc = FACE_SCRIPTS[stateKey];
   if(!sc) return;
@@ -3116,6 +3293,7 @@ function _openLocScene(resId, stateKey){
   if(typeof antHideFace==='function') antHideFace();
   openFace(resId);
   sc.onEnd = savedOnEnd;
+  if(faceScript){ faceScript._isLocScene=true; faceScript._locPrev=(prev===undefined?null:prev); }
 }
 
 function gotoLocation(locName){
@@ -3368,6 +3546,7 @@ function pickLocChoice(i){
 }
 
 function closeLoc(){
+  if(typeof _endingRunning!=='undefined' && _endingRunning) return;   // 엔딩 연출 중엔 닫히지 않는다
   const fd=document.getElementById('fade');
   fd.classList.add('in');
   setTimeout(()=>{
@@ -3853,17 +4032,10 @@ function exhReset(){
 
 // ── 상단 [처음으로] — 오클릭 방지용 2단 확인 ──
 let _exhArmT = null;
+// 상단 맨 왼쪽 로고(로꼬)가 [처음으로] 버튼. 클릭 즉시 초기화.
 function exhResetClick(){
-  const b = document.getElementById('exh-reset');
-  if(!b){ exhReset(); return; }
-  if(_exhArmT){ clearTimeout(_exhArmT); _exhArmT=null; exhReset(); return; }
-  b.classList.add('armed');
-  b.textContent = '한 번 더 = 초기화';
-  _exhArmT = setTimeout(()=>{
-    _exhArmT = null;
-    b.classList.remove('armed');
-    b.textContent = '↺ 처음으로';
-  }, 3000);
+  if(_exhArmT) return;              // 연타 방지
+  _exhArmT = setTimeout(()=>{ exhReset(); }, 120);   // :active 눌림 효과가 보이도록 아주 잠깐 뒤 리셋
 }
 
 // ── 무입력 자동 복귀 ──
@@ -3911,10 +4083,11 @@ function _exhIdleFire(){
 
 // ── DEV 컨트롤(루트 선택 / 다음날) 표시 토글 ──
 let _exhDevShown = false;
+var _day6EndVisible = false;   // Day6 [일과 종료] 노출 여부 (전시 모드에서도 유지)
 function exhToggleDev(force){
   _exhDevShown = (typeof force === 'boolean') ? force : !_exhDevShown;
   const wrap = document.getElementById('day-btn-wrap');
-  if(wrap) wrap.style.display = _exhDevShown ? '' : 'none';
+  if(wrap) wrap.style.display = (_exhDevShown || _day6EndVisible) ? '' : 'none';
   const menu = document.getElementById('ending-menu');
   if(menu && !_exhDevShown) menu.classList.remove('on');
   if(typeof log === 'function') log('DEV 컨트롤 ' + (_exhDevShown ? '표시' : '숨김') + ' (Ctrl+Shift+D)');

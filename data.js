@@ -2650,7 +2650,7 @@ const FACE_SCRIPTS={
     requireDay:2,
     _forceOpen:true,
     room:'3층 복도', loc:'3F복도',
-    bg:'배경/3F복도.png', char:'x',
+    bg:'배경/301문닫힘.png', char:'x',
     onEnd:'EVT_D2_TIKI_003',
     lines:[
       '(계단을 올라갔다.)',
@@ -2674,7 +2674,7 @@ const FACE_SCRIPTS={
     requireFlag:'EVT_D2_005_DONE',
     _forceOpen:true,
     room:'3층 복도', loc:'3F복도',
-    bg:'배경/3F복도.png', char:'x',
+    bg:'배경/301문닫힘.png', char:'x',
     onEnd:'EVT_301_DONE',
     lines:[
       '(다시 3층이다.),,',
@@ -2978,7 +2978,7 @@ const FACE_SCRIPTS={
     _forceOpen:true,
     _hideCharPanel:true,
     room:'3층 계단', loc:'3층 계단',
-    bg:'배경/3F복도.png', char:'x',
+    bg:'배경/301문닫힘.png', char:'x',
     onEnd:null,
     lines:[
       '(계단을 내려오다 멈췄다.)',
